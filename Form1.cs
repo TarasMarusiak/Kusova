@@ -1,162 +1,159 @@
 using BureauApp.Models;
 using BureauApp.Data;
 using System.Data;
+using System.IO;
 
 namespace BureauApp;
 
 public partial class Form1 : Form
 {
-    // Оголошення елементів інтерфейсу
-    private DataGridView dgv;
-    private TextBox txtTitle;
-    private TextBox txtDesc;
-    private TextBox txtExtra;
-    private TextBox txtSearch;
+    private DataGridView dgv = null!;
+    private TextBox txtTitle = null!, txtDesc = null!, txtPlace = null!, txtReward = null!, txtSearch = null!;
+    private ComboBox cbCategory = null!;
+    private DateTimePicker dtPicker = null!;
+    private CheckBox chkShowArchived = null!;
+    private Label lblStats = null!;
+    private PictureBox pbPhoto = null!;
+    private string currentImagePath = "";
+    private string currentUser = "";
 
     public Form1()
     {
+        DatabaseHelper.InitializeDatabase();
+        if (!AuthProcess()) { Environment.Exit(0); return; }
+
         InitializeComponent();
-        
-        // Налаштування вікна
-        this.Text = "Інформаційна система 'Бюро знахідок'";
-        this.Size = new Size(900, 700);
+        this.Text = $"BureauApp Ultimate v6.0 | Оператор: {currentUser}";
+        this.Size = new Size(1300, 850);
         this.StartPosition = FormStartPosition.CenterScreen;
-        
-        // Ініціалізація інтерфейсу та завантаження даних
         SetupInterface();
         RefreshGrid();
     }
 
+    private bool AuthProcess()
+    {
+        while (true)
+        {
+            string m = Microsoft.VisualBasic.Interaction.InputBox("Введіть '1' для Входу або '2' для Реєстрації:", "Авторизація", "1");
+            if (string.IsNullOrEmpty(m)) return false;
+
+            string u = Microsoft.VisualBasic.Interaction.InputBox("Логін:", "Користувач", "");
+            string p = Microsoft.VisualBasic.Interaction.InputBox("Пароль:", "Безпека", "");
+            if (string.IsNullOrEmpty(u)) return false;
+
+            if (m == "1") {
+                if (DatabaseHelper.ValidateUser(u, p)) { currentUser = u; DatabaseHelper.LogAction($"Вхід: {u}"); return true; }
+                MessageBox.Show("Помилка входу!");
+            } else {
+                if (DatabaseHelper.RegisterUser(u, p)) MessageBox.Show("Успішно! Тепер увійдіть.");
+                else MessageBox.Show("Логін зайнятий!");
+            }
+        }
+    }
+
     private void SetupInterface()
     {
-        // 1. Таблиця (DataGridView) для відображення списку речей
-        dgv = new DataGridView 
-        { 
-            Location = new Point(20, 20), 
-            Width = 840, 
-            Height = 300, 
-            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            ReadOnly = true,
-            BackgroundColor = Color.White
-        };
+        dgv = new DataGridView { Location = new Point(20, 20), Width = 900, Height = 350, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, SelectionMode = DataGridViewSelectionMode.FullRowSelect, ReadOnly = true };
+        dgv.SelectionChanged += (s, e) => ShowSelectedPhoto();
         this.Controls.Add(dgv);
 
-        // 2. Блок пошуку (Реалізація алгоритму фільтрації)
-        Label lblSearch = new Label { Text = "Пошук за назвою:", Location = new Point(20, 340), Width = 120 };
-        txtSearch = new TextBox { Location = new Point(150, 340), Width = 200 };
-        txtSearch.TextChanged += (s, e) => RefreshGrid(txtSearch.Text); // Пошук під час вводу
-        this.Controls.Add(lblSearch);
+        pbPhoto = new PictureBox { Location = new Point(940, 20), Width = 320, Height = 350, BorderStyle = BorderStyle.FixedSingle, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.White };
+        this.Controls.Add(pbPhoto);
+
+        lblStats = new Label { Location = new Point(20, 770), Width = 800, Font = new Font("Segoe UI", 10, FontStyle.Bold) };
+        this.Controls.Add(lblStats);
+
+        txtSearch = new TextBox { Location = new Point(20, 390), Width = 250, PlaceholderText = "Пошук..." };
+        txtSearch.TextChanged += (s, e) => RefreshGrid(txtSearch.Text);
         this.Controls.Add(txtSearch);
 
-        // 3. Група для додавання нових записів
-        GroupBox gbAdd = new GroupBox { Text = "Додати новий запис", Location = new Point(20, 380), Size = new Size(400, 250) };
+        chkShowArchived = new CheckBox { Text = "Показати архів", Location = new Point(280, 390), Checked = true };
+        chkShowArchived.CheckedChanged += (s, e) => RefreshGrid(txtSearch.Text);
+        this.Controls.Add(chkShowArchived);
+
+        Button btnBkp = new Button { Text = "БЕКАП", Location = new Point(450, 385), Width = 100 };
+        btnBkp.Click += (s, e) => { DatabaseHelper.BackupDatabase(); MessageBox.Show("Готово!"); };
         
-        Label lblTitle = new Label { Text = "Назва:", Location = new Point(20, 30), Width = 100 };
-        txtTitle = new TextBox { Location = new Point(130, 30), Width = 230 };
-        
-        Label lblDesc = new Label { Text = "Опис:", Location = new Point(20, 70), Width = 100 };
-        txtDesc = new TextBox { Location = new Point(130, 70), Width = 230, Multiline = true, Height = 60 };
+        Button btnExport = new Button { Text = "ЕКСПОРТ CSV", Location = new Point(560, 385), Width = 120 };
+        btnExport.Click += (s, e) => ExportToCSV();
 
-        Label lblExtra = new Label { Text = "Місце / Ціна:", Location = new Point(20, 150), Width = 100 };
-        txtExtra = new TextBox { Location = new Point(130, 150), Width = 230 };
+        Button btnMatch = new Button { Text = "MATCHING", Location = new Point(690, 385), Width = 120, BackColor = Color.Gold };
+        btnMatch.Click += (s, e) => RunMatchmaking();
 
-        gbAdd.Controls.AddRange(new Control[] { lblTitle, txtTitle, lblDesc, txtDesc, lblExtra, txtExtra });
-        this.Controls.Add(gbAdd);
+        this.Controls.AddRange(new Control[] { btnBkp, btnExport, btnMatch });
 
-        // 4. Кнопки управління
-        Button btnAddFound = new Button 
-        { 
-            Text = "Зберегти як ЗНАЙДЕНЕ", 
-            Location = new Point(440, 400), 
-            Width = 220, 
-            Height = 45, 
-            BackColor = Color.LightGreen,
-            FlatStyle = FlatStyle.Flat 
-        };
-        btnAddFound.Click += (s, e) => SaveItem(true);
+        GroupBox gb = new GroupBox { Text = "Панель керування", Location = new Point(20, 430), Size = new Size(550, 330) };
+        txtTitle = new TextBox { Location = new Point(150, 30), Width = 370 };
+        txtDesc = new TextBox { Location = new Point(150, 70), Width = 370, Multiline = true, Height = 60 };
+        cbCategory = new ComboBox { Location = new Point(150, 140), Width = 370, DropDownStyle = ComboBoxStyle.DropDownList };
+        cbCategory.Items.AddRange(new string[] { "Електроніка", "Документи", "Ключі", "Одяг", "Тварини", "Гроші", "Інше" });
+        cbCategory.SelectedIndex = 0;
+        dtPicker = new DateTimePicker { Location = new Point(150, 180), Width = 370 };
+        txtPlace = new TextBox { Location = new Point(150, 220), Width = 370 };
+        txtReward = new TextBox { Location = new Point(150, 260), Width = 150 };
+        Button btnImg = new Button { Text = "ФОТО", Location = new Point(310, 258), Width = 210 };
+        btnImg.Click += (s, e) => SelectPhoto();
+        gb.Controls.AddRange(new Control[] { txtTitle, txtDesc, cbCategory, dtPicker, txtPlace, txtReward, btnImg });
+        this.Controls.Add(gb);
 
-        Button btnAddLost = new Button 
-        { 
-            Text = "Зберегти як ЗАГУБЛЕНЕ", 
-            Location = new Point(440, 460), 
-            Width = 220, 
-            Height = 45, 
-            BackColor = Color.LightSalmon,
-            FlatStyle = FlatStyle.Flat 
-        };
-        btnAddLost.Click += (s, e) => SaveItem(false);
-
-        this.Controls.AddRange(new Control[] { btnAddFound, btnAddLost });
+        Button btnF = new Button { Text = "ЗНАЙДЕНО", Location = new Point(600, 440), Width = 300, Height = 60, BackColor = Color.Honeydew };
+        btnF.Click += (s, e) => ActionItem(true);
+        Button btnL = new Button { Text = "ЗАГУБЛЕНО", Location = new Point(600, 510), Width = 300, Height = 60, BackColor = Color.MistyRose };
+        btnL.Click += (s, e) => ActionItem(false);
+        Button btnA = new Button { Text = "ПОВЕРНУТО", Location = new Point(600, 590), Width = 300, Height = 60, BackColor = Color.LightSkyBlue };
+        btnA.Click += (s, e) => { if (dgv.SelectedRows.Count > 0) DatabaseHelper.ArchiveItem((int)dgv.SelectedRows[0].Cells["ID"].Value); RefreshGrid(); };
+        this.Controls.AddRange(new Control[] { btnF, btnL, btnA });
     }
 
-    // Метод для збереження даних у базу (Використовує моделі ООП)
-    private void SaveItem(bool isFound)
-    {
-        if (string.IsNullOrWhiteSpace(txtTitle.Text))
-        {
-            MessageBox.Show("Будь ласка, введіть назву речі!");
-            return;
+    private void SelectPhoto() {
+        using OpenFileDialog ofd = new OpenFileDialog { Filter = "Images|*.jpg;*.png" };
+        if (ofd.ShowDialog() == DialogResult.OK) {
+            if (!Directory.Exists("photos")) Directory.CreateDirectory("photos");
+            string path = Path.Combine("photos", Path.GetFileName(ofd.FileName));
+            File.Copy(ofd.FileName, path, true);
+            currentImagePath = path;
+            pbPhoto.Image = Image.FromFile(path);
         }
-
-        Item newItem;
-        if (isFound)
-        {
-            // Створення об'єкта FoundItem (Успадкування)
-            newItem = new FoundItem { 
-                Title = txtTitle.Text, 
-                Description = txtDesc.Text, 
-                EventDate = DateTime.Now, 
-                FoundPlace = txtExtra.Text 
-            };
-        }
-        else
-        {
-            // Створення об'єкта LostItem (Успадкування)
-            decimal.TryParse(txtExtra.Text, out decimal reward);
-            newItem = new LostItem { 
-                Title = txtTitle.Text, 
-                Description = txtDesc.Text, 
-                EventDate = DateTime.Now, 
-                Reward = reward 
-            };
-        }
-
-        // Збереження через DatabaseHelper
-        DatabaseHelper.AddItem(newItem);
-        
-        // Очищення полів та оновлення таблиці
-        ClearInputs();
-        RefreshGrid();
-        MessageBox.Show("Запис успішно додано!");
     }
 
-    // Метод для оновлення таблиці та фільтрації (Поліморфізм)
-    private void RefreshGrid(string filter = "")
-    {
+    private void ShowSelectedPhoto() {
+        if (dgv.SelectedRows.Count > 0) {
+            string p = dgv.SelectedRows[0].Cells["Фото"].Value?.ToString() ?? "";
+            pbPhoto.Image = (!string.IsNullOrEmpty(p) && File.Exists(p)) ? Image.FromFile(p) : null;
+        }
+    }
+
+    private void ExportToCSV() {
         var items = DatabaseHelper.GetAllItems();
-        
-        // Фільтрація списку (LINQ)
-        if (!string.IsNullOrEmpty(filter))
-        {
-            items = items.Where(i => i.Title.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
-        }
-
-        // Прив'язка даних до таблиці
-        dgv.DataSource = items.Select(i => new {
-            ID = i.Id,
-            Статус = i is FoundItem ? "Знайдено" : "Загублено",
-            Назва = i.Title,
-            Опис = i.Description,
-            Дата = i.EventDate.ToShortDateString(),
-            Інформація = i.GetSummary() // Тут працює ПОЛІМОРФІЗМ
-        }).ToList();
+        using StreamWriter sw = new StreamWriter("report.csv");
+        sw.WriteLine("ID;Status;Title;Category");
+        foreach(var i in items) sw.WriteLine($"{i.Id};{i.IsArchived};{i.Title};{i.Category}");
+        MessageBox.Show("Звіт report.csv створено!");
     }
 
-    private void ClearInputs()
-    {
-        txtTitle.Clear();
-        txtDesc.Clear();
-        txtExtra.Clear();
+    private void RunMatchmaking() {
+        if (dgv.SelectedRows.Count == 0) return;
+        string t = dgv.SelectedRows[0].Cells["Назва"].Value.ToString()!.Split(' ')[0];
+        string c = dgv.SelectedRows[0].Cells["Категорія"].Value.ToString()!;
+        var matches = DatabaseHelper.GetAllItems().Where(x => x.Category == c && x.Title.Contains(t) && !x.IsArchived).ToList();
+        MessageBox.Show(matches.Any() ? "Знайдено: " + string.Join(", ", matches.Select(m => m.Title)) : "Нічого не знайдено");
+    }
+
+    private void ActionItem(bool isFound) {
+        if (string.IsNullOrWhiteSpace(txtTitle.Text)) return;
+        Item item = isFound ? new FoundItem() : new LostItem { Reward = decimal.TryParse(txtReward.Text, out decimal r) ? r : 0 };
+        item.Title = txtTitle.Text; item.Description = txtDesc.Text; item.Category = cbCategory.Text; item.EventDate = dtPicker.Value; item.Place = txtPlace.Text; item.ImagePath = currentImagePath;
+        DatabaseHelper.AddItem(item);
+        DatabaseHelper.LogAction($"Додано: {item.Title} користувачем {currentUser}");
+        currentImagePath = ""; pbPhoto.Image = null; RefreshGrid();
+    }
+
+    private void RefreshGrid(string filter = "") {
+        var list = DatabaseHelper.GetAllItems();
+        if (!chkShowArchived.Checked) list = list.Where(x => !x.IsArchived).ToList();
+        if (!string.IsNullOrEmpty(filter)) list = list.Where(x => x.Title.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+        dgv.DataSource = list.Select(x => new { ID = x.Id, Статус = x.IsArchived ? "АРХІВ" : (x is FoundItem ? "Знайдено" : "Загублено"), Категорія = x.Category, Назва = x.Title, Дата = x.EventDate.ToShortDateString(), Фото = x.ImagePath }).ToList();
+        var s = DatabaseHelper.GetStats();
+        lblStats.Text = $"📊 СИСТЕМА: Знайдено ({s.found}) | Загублено ({s.lost}) | Архів ({s.archived})";
     }
 }

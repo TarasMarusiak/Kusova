@@ -1,3 +1,5 @@
+using BureauApp.Data;
+
 namespace BureauApp;
 
 static class Program
@@ -8,9 +10,13 @@ static class Program
     [STAThread]
     static void Main()
     {
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
+        // 1. Стандартне налаштування конфігурації
         ApplicationConfiguration.Initialize();
+
+        // 2. ВАЖЛИВО: Викликаємо створення бази даних та таблиць перед запуском форми
+        DatabaseHelper.InitializeDatabase();
+
+        // 3. Запускаємо головне вікно
         Application.Run(new Form1());
-    }    
+    }
 }
